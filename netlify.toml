@@ -1,5 +1,0 @@
-# Sitio independiente — Control de Entregas RUGE / EDLP
-# Deploy estático sin build: publica la raíz del repo (este index.html).
-[build]
-  publish = "."
-  command = ""
