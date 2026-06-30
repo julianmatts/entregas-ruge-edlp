@@ -1,0 +1,9 @@
+{
+  // Worker de assets estáticos — sirve el index.html directamente.
+  // Cloudflare ejecuta `npx wrangler deploy` y publica todo el directorio.
+  "name": "entregas-ruge-edlp",
+  "compatibility_date": "2026-06-29",
+  "assets": {
+    "directory": "."
+  }
+}
