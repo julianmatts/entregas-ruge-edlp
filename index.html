@@ -194,6 +194,12 @@
     .card-prog-fill { height:100%; transition:width .4s; }
     .card-arrow { position:absolute; right:16px; top:18px; font-size:18px; color:var(--gris-line); transition:color .2s; }
     .card:hover .card-arrow { color:var(--dorado); }
+    .card-note {
+      margin-top:12px; padding-top:11px; border-top:1px solid var(--gris-line);
+      font-family:'Barlow Condensed',sans-serif; font-size:12px; line-height:1.35;
+      color:var(--dim); letter-spacing:.35px;
+    }
+    .card-note b { color:var(--dorado-lt); font-weight:700; }
 
     /* ── TOGGLE ── */
     .view-toggle { display:flex; align-items:center; gap:14px; margin-bottom:20px; flex-wrap:wrap; }
@@ -326,6 +332,27 @@ const CANALES = [
   { id: 'protocolo',    nombre: 'Protocolo',    bloque: 'Contrato',  cols: [53, 54, 55] },
 ];
 
+const MAYORISTA_2S2026_FALLBACK = 971;
+const CANAL_VACIO = { pedido:0, entrega:0, resta:0 };
+
+function esErrorTiendaPincha(a) {
+  const codigo = String(a.codigo || '').trim().toUpperCase();
+  const articulo = String(a.articulo || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  return codigo === 'RUG268' || articulo === 'PANTALON TRAINING NEGRO PERTENENCIA';
+}
+
+function limpiarCanalesEspeciales(a) {
+  if (esErrorTiendaPincha(a) && a.canales && a.canales.tiendapincha) {
+    a.canales.tiendapincha = { pedido:0, entrega:0, resta:0 };
+  }
+  return a;
+}
+
+function cvCanal(a, cid) {
+  if (cid === 'tiendapincha' && esErrorTiendaPincha(a)) return CANAL_VACIO;
+  return (a.canales && a.canales[cid]) || CANAL_VACIO;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PARSER — exacto según spec
 // ═══════════════════════════════════════════════════════════════
@@ -356,7 +383,7 @@ function parseControlGeneral(workbook) {
       };
     });
 
-    articulos.push({
+    articulos.push(limpiarCanalesEspeciales({
       articulo:     String(articulo).trim(),
       codigo:       r[1]  ? String(r[1]).trim() : '',
       color:        r[2]  ?? '',
@@ -366,8 +393,9 @@ function parseControlGeneral(workbook) {
       proveedor:    r[6]  ?? '',
       linea:        r[7]  ?? '',
       totalGeneral: num(r[34]),
+      pedido2s2026: num(r[15]) + num(r[16]),
       canales,
-    });
+    }));
   }
 
   const totales = {};
@@ -492,7 +520,24 @@ function setStatus(msg, type) {
 }
 
 function catLabel(tipo) { return tipo === 'linea' ? 'Línea' : 'Silueta'; }
-function catOf(a, tipo) { return String(a[tipo] || '(sin clasificar)'); }
+function esAccesorio(a) {
+  const txt = (String(a.articulo || '') + ' ' + String(a.codigo || '')).toUpperCase();
+  return /\b(MORRAL|BOLSO|BOLSOS|MOCHILA|MOCHILAS)\b/.test(txt);
+}
+
+function catOf(a, tipo) {
+  if (tipo === 'linea' && esAccesorio(a)) return 'ACCESORIOS';
+  return String(a[tipo] || '(sin clasificar)');
+}
+
+function pendiente2s2026(arts, cid) {
+  const calc = arts.reduce((acc, a) => {
+    const cv = cvCanal(a, cid);
+    if (!cv || cv.resta <= 0 || !a.pedido2s2026) return acc;
+    return acc + Math.min(cv.resta, a.pedido2s2026);
+  }, 0);
+  return calc || (cid === 'tiendapincha' ? MAYORISTA_2S2026_FALLBACK : 0);
+}
 
 function getArts() {
   if (!ST.data) return [];
@@ -507,7 +552,7 @@ function getArts() {
 
 function aggC(arts, cid) {
   return arts.reduce((a, x) => {
-    const c = x.canales[cid];
+    const c = cvCanal(x, cid);
     if (!c) return a;
     a.pedido += c.pedido; a.entrega += c.entrega; a.resta += c.resta;
     return a;
@@ -589,12 +634,15 @@ function renderCanales(arts) {
       totB.pedido += t.pedido; totB.entrega += t.entrega; totB.resta += t.resta;
       // líneas presentes en este canal (con pedido o entrega)
       const lineas = [...new Set(arts
-        .filter(a => (a.canales[c.id]?.pedido || a.canales[c.id]?.entrega))
+        .filter(a => (cvCanal(a, c.id).pedido || cvCanal(a, c.id).entrega))
         .map(a => catOf(a, 'linea')))];
       const pills = lineas.slice(0, 4).map(l => '<span class="pill">' + l + '</span>').join('');
       const cls = semaCls(t.resta, t.pedido);
       const p   = pct(t.entrega, t.pedido);
       const col = semaColor(cls);
+      const notaMayorista = c.id === 'tiendapincha'
+        ? '<div class="card-note">Del pendiente, <b>' + fmt(pendiente2s2026(arts, c.id)) + '</b> unidades corresponden a pedidos del 2do semestre 2026.</div>'
+        : '';
       const pctTxt = (t.resta < 0)
         ? '<span class="pct-lbl sobre">+' + fmt(Math.abs(t.resta)) + ' extra</span>'
         : '<span class="pct-lbl ' + cls + '">' + p + '%</span>';
@@ -610,6 +658,7 @@ function renderCanales(arts) {
         + '</div>'
         + '<div class="card-prog-top"><span class="lbl">Cumplimiento</span>' + pctTxt + '</div>'
         + '<div class="card-prog-bar"><span class="card-prog-fill" style="width:' + Math.min(100,p) + '%;background:' + col + '"></span></div>'
+        + notaMayorista
         + '</div>';
     });
     h += '<div class="block-hdr"><span class="block-title">' + bloque.toUpperCase() + '</span>'
@@ -626,7 +675,7 @@ function renderCategorias(arts) {
   const tipo = ST.catTipo;
 
   // solo artículos con movimiento en este canal
-  const inCanal = arts.filter(a => (a.canales[c.id]?.pedido || a.canales[c.id]?.entrega));
+  const inCanal = arts.filter(a => (cvCanal(a, c.id).pedido || cvCanal(a, c.id).entrega));
 
   const grupos = {};
   inCanal.forEach(a => {
@@ -638,6 +687,9 @@ function renderCategorias(arts) {
     .map(([k, items]) => ({ k, items, ...aggC(items, c.id) }))
     .sort((a,b) => b.pedido - a.pedido);
   const tot = aggC(inCanal, c.id);
+  const notaMayorista = c.id === 'tiendapincha'
+    ? '<div class="card-note mayorista-note">Del pendiente de TiendaPincha, <b>' + fmt(pendiente2s2026(arts, c.id)) + '</b> unidades corresponden a pedidos del 2do semestre 2026.</div>'
+    : '';
 
   let cards = '';
   filas.forEach(f => {
@@ -663,6 +715,7 @@ function renderCategorias(arts) {
 
   document.getElementById('drillContent').innerHTML =
     viewToggle() +
+    notaMayorista +
     '<div class="block-hdr"><span class="block-title">' + c.nombre.toUpperCase() + ' · POR ' + catLabel(tipo).toUpperCase() + '</span>'
     + '<span class="block-line"></span>'
     + '<span class="block-tot">Pedido <b>' + fmt(tot.pedido) + '</b> · Entregado <b>' + fmt(tot.entrega) + '</b> · Pend. <b>' + (tot.resta<0?'+'+fmt(Math.abs(tot.resta)):fmt(tot.resta)) + '</b></span></div>'
@@ -675,13 +728,13 @@ function renderArticulos(arts) {
   const tipo = ST.catTipo;
   const cat  = ST.cat;
   const items = arts
-    .filter(a => catOf(a, tipo) === cat && (a.canales[c.id]?.pedido || a.canales[c.id]?.entrega))
-    .sort((a,b) => (b.canales[c.id]?.pedido||0) - (a.canales[c.id]?.pedido||0));
+    .filter(a => catOf(a, tipo) === cat && (cvCanal(a, c.id).pedido || cvCanal(a, c.id).entrega))
+    .sort((a,b) => cvCanal(b, c.id).pedido - cvCanal(a, c.id).pedido);
   const tot = aggC(items, c.id);
 
   let rows = '';
   items.forEach(a => {
-    const cv  = a.canales[c.id];
+    const cv  = cvCanal(a, c.id);
     const cls = semaCls(cv.resta, cv.pedido);
     rows += '<tr>'
       + '<td title="' + a.articulo + '">' + a.articulo + '</td>'
@@ -756,8 +809,8 @@ document.getElementById('fileInput').addEventListener('change', async e => {
 
 function showValidation(parsed) {
   const EXP = {
-    totalGlobal:  { pedido:19676, entrega:17512, resta:2321  },
-    tiendapincha: { pedido:7940,  entrega:6496,  resta:1444  },
+    totalGlobal:  { pedido:19676, entrega:17452, resta:2381  },
+    tiendapincha: { pedido:7940,  entrega:6436,  resta:1504  },
     plantel:      { pedido:8395,  entrega:8228,  resta:184   },
     femenino:     { pedido:793,   entrega:846,   resta:-53   },
     reserva:      { pedido:1038,  entrega:894,   resta:144   },
