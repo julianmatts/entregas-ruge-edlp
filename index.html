@@ -809,7 +809,7 @@ async function confirmUpload() {
   ST.data = ST.pending; ST.pending = null;
   closeVal();
   document.getElementById('kpiBar').style.display = '';
-  if (!ok) setStatus('Vista local (Firebase no disponible)', 'err');
+  if (!ok) setStatus('Datos locales cargados');
   render();
 }
 
@@ -835,6 +835,7 @@ function closeVal() {
   // 1) Mostrar de entrada el snapshot embebido del Excel
   ST.data = DEFAULT_SNAPSHOT;
   render();
+  if (!fbOk) setStatus('Datos locales cargados');
   // 2) Si Firebase está configurado, intentar traer un snapshot más nuevo
   //    (fbLoad sólo reemplaza si encuentra datos válidos)
   if (fbOk) { await fbLoad(); }
